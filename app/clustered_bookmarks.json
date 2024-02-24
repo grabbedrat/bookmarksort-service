@@ -1,0 +1,12 @@
+[
+    {
+        "text": "Example Bookmark - https://example.com",
+        "cluster": 0,
+        "cluster_name": "\"Web Reference\""
+    },
+    {
+        "text": "Another Bookmark - https://anotherexample.com",
+        "cluster": 1,
+        "cluster_name": "\"Example\""
+    }
+]
