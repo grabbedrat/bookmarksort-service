@@ -11,10 +11,18 @@ def process_json_data(json_data):
     
     # Iterate through each item in the provided JSON data
     for item in json_data:
-        # Directly append each item to the results list as there's no need for recursion
-        if 'name' in item and 'url' in item:
-            # Ensure 'tags' is present and is a list; if not, assign an empty list
-            item['tags'] = item.get('tags', [])
-            results.append(item)
+        # create a heirchical json where each unique "cluster" is a folder with "cluster_name" as the name and bookmarks as children with name and url pulled out of the text which is delimetered by " - "
+        for bookmark in item['bookmarks']:
+            # Extract the relevant information for each bookmark
+            name = bookmark['name']
+            url = bookmark['url']
+            tags = bookmark['tags']
+            
+            # Add the extracted data to the results list
+            results.append({
+                "name": name,
+                "url": url,
+                "tags": tags
+            })
     
     return results

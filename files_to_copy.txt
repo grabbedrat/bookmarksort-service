@@ -1,8 +1,5 @@
-./run.py
-./app/__init__.py
 ./app/cluster_naming.py
 ./app/json_processing.py
 ./app/bookmark_import.py
 ./app/cluster_bookmarks.py
 ./app/routes.py
-
