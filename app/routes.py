@@ -5,7 +5,7 @@ from .cluster_naming import generate_cluster_names
 from .bookmark_import import build_json_import
 import json
 
-@app.route('/cluster', methods=['POST'])
+@app.route('/cluster', methods=['POST', 'OPTIONS'])
 def cluster_texts_from_json():
     # Check if there is JSON data in the request
     if not request.is_json:
