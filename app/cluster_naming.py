@@ -29,13 +29,6 @@ def generate_cluster_names(bookmarks, clusters, num_clusters):
         # Append the user prompt with the current cluster's descriptions
         messages.append({"role": "user", "content": prompt})
 
-        print(len(messages))
-
-        # save to file
-        with open('messages.txt', 'w') as f:
-            for message in messages:
-                f.write(f"{message['role']}: {message['content']}\n")
-
         # Make the API call with the messages
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
@@ -55,5 +48,7 @@ def generate_cluster_names(bookmarks, clusters, num_clusters):
             "cluster": int(cluster_id),
             "cluster_name": cluster_names.get(cluster_id, "")
         })
+    for info in cluster_info:
+        print(info["cluster_name"])
 
     return cluster_info

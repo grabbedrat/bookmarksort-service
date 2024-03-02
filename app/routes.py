@@ -3,9 +3,11 @@ from flask import request, jsonify, current_app as app
 from .cluster_bookmarks import cluster_texts
 from .cluster_naming import generate_cluster_names
 from .bookmark_import import build_json_import
+from flask_cors import cross_origin
 import json
 
-@app.route('/cluster', methods=['POST', 'OPTIONS'])
+@app.route('/cluster', methods=['POST'])
+@cross_origin()
 def cluster_texts_from_json():
     # Check if there is JSON data in the request
     if not request.is_json:
