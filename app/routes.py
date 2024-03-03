@@ -1,37 +1,34 @@
 from flask import request, jsonify, current_app as app
-# Assuming you have similar functions to process JSON data
+from flask_cors import cross_origin
+import json
+
 from .cluster_bookmarks import cluster_texts
 from .cluster_naming import generate_cluster_names
 from .bookmark_import import build_json_import
-from flask_cors import cross_origin
-import json
 
 @app.route('/cluster', methods=['POST'])
 @cross_origin()
 def cluster_texts_from_json():
-    # Check if there is JSON data in the request
     if not request.is_json:
         return jsonify({"error": "Missing JSON in request"}), 400
-    
-    # Get JSON data
-    json_data = request.get_json()
-    
-    try:
-        # Process the JSON data, e.g., to extract text or relevant information
-        #print("Received data: ", json_data)
-        print("process_json_data: ", json_data)
-        
-        # Cluster the extracted texts
-        print("process_json_data done, clustering...")
-        clusters, num_clusters, embeddings = cluster_texts(json_data)
-        
-        # Generate names or other relevant information for the clusters
-        print("clustering done, generating names...")
-        cluster_info = generate_cluster_names(json_data, clusters, num_clusters)
 
-        print("names generated, formatting...")
-        bookmark_import = build_json_import(cluster_info)
+    json_data = request.get_json()
+
+    try:
+        # Correctly log the type and optionally the length or other properties of json_data
+        app.logger.debug(f"Received JSON data of type {type(json_data).__name__}, length: {len(json_data) if isinstance(json_data, list) else 'N/A'}")
         
+        clusters, num_clusters, embeddings = cluster_texts(json_data)
+        cluster_info = generate_cluster_names(json_data, clusters, num_clusters)
+        bookmark_import = build_json_import(cluster_info)
         return jsonify(bookmark_import)
+    except json.JSONDecodeError as json_err:
+        return jsonify({"error": f"Malformed JSON data: {json_err}"}), 400
+    except ValueError as val_err:
+        return jsonify({"error": f"Value error: {val_err}"}), 400
+    except KeyError as key_err:
+        app.logger.error(f"Missing key in JSON data: {key_err}")
+        return jsonify({"error": f"Missing key: {key_err}"}), 400
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        app.logger.error(f"Unexpected error: {e}")
+        return jsonify({"error": "An unexpected error occurred"}), 500
