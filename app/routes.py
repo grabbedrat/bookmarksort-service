@@ -2,9 +2,9 @@ from flask import request, jsonify, current_app as app
 from flask_cors import cross_origin
 import json
 
-from .cluster_bookmarks import cluster_texts
-from .cluster_naming import generate_cluster_names
-from .bookmark_import import build_json_import
+from .clustering_methods.kmeans_clustering import cluster_texts
+from .utils.cluster_naming import generate_cluster_names
+from .utils.bookmark_import import build_json_import
 
 @app.route('/cluster', methods=['POST'])
 @cross_origin()
