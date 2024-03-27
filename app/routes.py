@@ -29,6 +29,7 @@ def cluster_texts_from_json():
 
     try:
         clusters, num_clusters, embeddings = cluster_texts(json_data)
+        print(f"Clusters clustered")
         cluster_info = generate_cluster_names(json_data, clusters, num_clusters)
         bookmark_import = build_json_import(cluster_info)
 
