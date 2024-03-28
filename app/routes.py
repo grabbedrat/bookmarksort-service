@@ -4,7 +4,7 @@ from hdbscan import HDBSCAN
 from sklearn.feature_extraction.text import TfidfVectorizer
 from .utils.cluster_naming import generate_cluster_names
 from .utils.bookmark_import import build_json_import
-from .utils.vis_clusters import visualize_clusters
+from .utils.vis_clusters import visualize_clusters, visualize_structured_data
 
 @app.route('/cluster', methods=['POST'])
 @cross_origin()
@@ -49,6 +49,10 @@ def cluster_texts_from_json():
 
         output_file = "cluster_visualization.png"
         visualize_clusters(clusters, num_clusters, X.toarray(), output_file)
+
+        # Visualize the structured data and save as JPEG
+        output_file_structured = "structured_data_visualization.jpeg"
+        visualize_structured_data(structured_data, output_file_structured)
 
         return jsonify(structured_data)
 

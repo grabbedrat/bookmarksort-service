@@ -5,6 +5,7 @@ matplotlib.use('Agg')  # Set non-interactive backend
 import matplotlib.pyplot as plt
 from matplotlib import cm
 from scipy.cluster.hierarchy import dendrogram, linkage
+import networkx as nx
 
 
 def plot_clusters(cluster_points, color_map):
@@ -45,4 +46,30 @@ def plot_dendrogram(link_matrix, output_file):
     plt.ylabel('Distance')
     plt.tight_layout()
     plt.savefig(output_file)
+    plt.close()
+
+def visualize_structured_data(structured_data, output_file):
+    G = nx.DiGraph()
+
+    def add_nodes_recursively(data, parent=None):
+        for item in data:
+            if item["type"] == "folder":
+                folder_name = f"{item['name']} ({len(item['children'])})"
+                G.add_node(item["id"], name=folder_name, type="folder")
+                if parent is not None:
+                    G.add_edge(parent, item["id"])
+                add_nodes_recursively(item["children"], parent=item["id"])
+
+    add_nodes_recursively(structured_data)
+
+    labels = nx.get_node_attributes(G, 'name')
+    node_colors = ["lightblue" for _ in G.nodes()]
+
+    plt.figure(figsize=(12, 8))
+    pos = nx.spring_layout(G, seed=42)
+    nx.draw_networkx(G, pos, labels=labels, node_color=node_colors, font_size=10, node_size=1000)
+
+    plt.axis("off")
+    plt.tight_layout()
+    plt.savefig(output_file, format="jpeg", dpi=300)
     plt.close()
