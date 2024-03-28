@@ -7,3 +7,4 @@ README.md
 ./app/clusters_plot.py
 ./app/cluster_bookmarks.py
 ./app/routes.py
+./run.py
