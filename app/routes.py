@@ -5,6 +5,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from .utils.cluster_naming import generate_cluster_names
 from .utils.bookmark_import import build_json_import
 from .utils.visualization import visualize_clusters, visualize_structured_data
+from .utils.data_preprocessing import clean_bookmark_data, add_tags_to_bookmarks
 
 @app.route('/cluster', methods=['POST'])
 @cross_origin()
@@ -22,8 +23,22 @@ def cluster_texts_from_json():
             return jsonify({"error": "Bookmark object missing required keys"}), 400
 
     try:
+        # Clean the bookmark data
+        cleaned_data = clean_bookmark_data(json_data)
+
+        # Add tags to the cleaned bookmark data
+        tagged_data = add_tags_to_bookmarks(cleaned_data)
+
+        # Print a sample of 3 bookmarks before sorting
+        print("Sample bookmarks before sorting:")
+        for bookmark in tagged_data[:3]:
+            print(f"Name: {bookmark['name']}")
+            print(f"URL: {bookmark['url']}")
+            print(f"Tags: {bookmark.get('tags', [])}")
+            print()
+
         # Extract text data from bookmarks
-        texts = [bookmark["name"] for bookmark in json_data]
+        texts = [bookmark["name"] for bookmark in tagged_data]
 
         # Vectorize the text data using TF-IDF
         vectorizer = TfidfVectorizer()
@@ -39,7 +54,7 @@ def cluster_texts_from_json():
             if label != -1:  # Exclude noise points
                 if label not in clusters:
                     clusters[label] = []
-                clusters[label].append(json_data[i])
+                clusters[label].append(tagged_data[i])
 
         num_clusters = len(clusters)
         app.logger.info("Clusters clustered")
