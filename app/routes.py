@@ -4,7 +4,7 @@ from hdbscan import HDBSCAN
 from sklearn.feature_extraction.text import TfidfVectorizer
 from .utils.cluster_naming import generate_cluster_names
 from .utils.bookmark_import import build_json_import
-from .utils.vis_clusters import visualize_clusters, visualize_structured_data
+from .utils.visualization import visualize_clusters, visualize_structured_data
 
 @app.route('/cluster', methods=['POST'])
 @cross_origin()
