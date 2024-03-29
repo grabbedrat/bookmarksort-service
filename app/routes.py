@@ -30,7 +30,7 @@ def cluster_texts_from_json():
         X = vectorizer.fit_transform(texts)
 
         # Perform clustering using HDBSCAN with a lower min_cluster_size
-        clusterer = HDBSCAN(min_cluster_size=3)  # Adjust this value as needed
+        clusterer = HDBSCAN()  # Adjust this value as needed
         cluster_labels = clusterer.fit_predict(X)
 
         # Assign bookmarks to clusters
