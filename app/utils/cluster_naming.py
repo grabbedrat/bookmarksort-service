@@ -1,9 +1,8 @@
-from openai import OpenAI
-
 import logging
 import time
 import re
 import os
+from openai import OpenAI
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -12,67 +11,50 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))  # Replace with your actual API key
 
 def generate_cluster_names(clusters):
-    start_time = time.time()
-
-    cluster_names = {}
-    for cluster_id, cluster_bookmarks in clusters.items():
-        print(f"Generating name for cluster {cluster_id}...")
-        
-        # Preprocess the bookmark descriptions
-        cleaned_descriptions = [preprocess_description(bookmark['name'], bookmark['url']) for bookmark in cluster_bookmarks]
-        
-        prompt = f"Generate a concise and relevant name for a group of bookmarks with the following descriptions:\n\n{', '.join(cleaned_descriptions)}\n\nExample cluster names:\nTechnology News\nTravel Destinations\nRecipes and Cooking\n\nCluster name:"
-        
+    cluster_info = {}
+    for cluster_id in clusters:
+        prompt = f"Generate a concise and descriptive name for a cluster of bookmarks with the following tags:\n\n"
+        for bookmark in clusters[cluster_id]:
+            tags = ", ".join(bookmark.get("tags", []))
+            prompt += f"- {tags}\n"
+        prompt += "\nCluster Name:"
         try:
-            # Generate a cluster name using the OpenAI API
             response = client.chat.completions.create(
-                model="gpt-3.5-turbo",  # or "gpt-4" if you're using that model
+                model="gpt-3.5-turbo",
                 messages=[
-                    {"role": "system", "content": "You are a helpful assistant."},
+                    {"role": "system", "content": "You are a helpful assistant that generates concise and descriptive names for clusters of bookmarks."},
                     {"role": "user", "content": prompt}
-                ]
+                ],
+                max_tokens=50,
+                n=1,
+                stop=None,
+                temperature=0.7,
             )
-            # Check if the response is not None and has a 'content' attribute
-            if response.choices and hasattr(response.choices[0].message, 'content'):
-                generated_name = postprocess_name(response.choices[0].message.content.strip())
-                # Implement error handling to ensure appropriate names are set for the clusters
-                if generated_name:
-                    cluster_names[cluster_id] = generated_name
-                else:
-                    cluster_names[cluster_id] = f"Cluster {cluster_id}"
+            if response.choices:
+                cluster_name = response.choices[0].message.content.strip()
+                cluster_name = postprocess_name(cluster_name)  # Postprocess the generated name
+                cluster_info[cluster_id] = cluster_name
             else:
-                logging.error("Received invalid response from OpenAI API.")
-                cluster_names[cluster_id] = f"Cluster {cluster_id}"
-
-            print(f"Generated name for cluster {cluster_id}: {cluster_names[cluster_id]}")
+                cluster_info[cluster_id] = f"Cluster {cluster_id}"
         except Exception as e:
-            logging.error(f"Error during text generation: {e}")
-            cluster_names[cluster_id] = f"Cluster {cluster_id}"  # Provide a default name in case of generation failure
-            print(f"Error generating name for cluster {cluster_id}. Using default name: {cluster_names[cluster_id]}")
-
-    end_time = time.time()
-    print(f"Total time taken for generating cluster names: {end_time - start_time} seconds")
-
-    return cluster_names
+            logging.error(f"Error generating name for cluster {cluster_id}: {e}")
+            cluster_info[cluster_id] = f"Cluster {cluster_id}"
+    return cluster_info
 
 def preprocess_description(name, url):
     # Combine the name and URL into a single description
     description = f"{name} - {url}"
-    
     # Remove URLs and special characters from the description
     cleaned_description = re.sub(r'http\S+', '', description)
     cleaned_description = re.sub(r'[^a-zA-Z0-9\s]', '', cleaned_description)
-    
     # Truncate long descriptions
     max_length = 100
     if len(cleaned_description) > max_length:
         cleaned_description = cleaned_description[:max_length] + "..."
-    
     return cleaned_description
 
 def postprocess_name(name):
     # Remove any irrelevant or incoherent parts from the generated name
     name = re.sub(r'[^a-zA-Z0-9\s]', '', name)
     name = name.strip()
-    
     return name

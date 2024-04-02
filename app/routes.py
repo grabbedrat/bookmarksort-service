@@ -28,6 +28,7 @@ def cluster_texts_from_json():
 
         # Add tags to the cleaned bookmark data
         tagged_data = add_tags_to_bookmarks(cleaned_data)
+        print("Data Tagged")
 
         # Print a sample of 3 bookmarks before sorting
         print("Sample bookmarks before sorting:")
@@ -60,6 +61,7 @@ def cluster_texts_from_json():
         app.logger.info("Clusters clustered")
 
         cluster_info = generate_cluster_names(clusters)
+        
         structured_data = build_structured_json(clusters, cluster_info)
 
         output_file = "cluster_visualization.png"
