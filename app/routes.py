@@ -6,10 +6,12 @@ from .utils.cluster_naming import generate_cluster_names
 from .utils.bookmark_import import build_json_import
 from .utils.visualization import visualize_clusters, visualize_structured_data
 from .utils.data_preprocessing import clean_bookmark_data, add_tags_to_bookmarks
+import json
 
 @app.route('/cluster', methods=['POST'])
 @cross_origin()
 def cluster_texts_from_json():
+
     if not request.is_json:
         return jsonify({"error": "Missing JSON in request"}), 400
 
@@ -21,6 +23,14 @@ def cluster_texts_from_json():
     for bookmark in json_data:
         if not expected_keys.issubset(bookmark):
             return jsonify({"error": "Bookmark object missing required keys"}), 400
+        
+    # Save request data to a file
+    with open('/root/myrepos/bookmarksort-service/app/request_data.json', 'w') as file:
+        json.dump(json_data, file)
+    print("Request data saved to file")
+        
+    # print amount of bookamrks
+    print(f"Number of bookmarks received: {len(json_data)}")
 
     try:
         # Clean the bookmark data
@@ -30,16 +40,20 @@ def cluster_texts_from_json():
         tagged_data = add_tags_to_bookmarks(cleaned_data)
         print("Data Tagged")
 
-        # Print a sample of 3 bookmarks before sorting
-        print("Sample bookmarks before sorting:")
-        for bookmark in tagged_data[:3]:
-            print(f"Name: {bookmark['name']}")
-            print(f"URL: {bookmark['url']}")
-            print(f"Tags: {bookmark.get('tags', [])}")
-            print()
+        # Save tagged data to a file
+        with open('/root/myrepos/bookmarksort-service/app/tagged_data.json', 'w') as file:
+            json.dump(tagged_data, file)
+        print("Tagged data saved to file")
+
+        with open('/root/myrepos/bookmarksort-service/app/tagged_data.json', 'w') as file:
+            json.dump(tagged_data, file)
+        print("Tagged data saved to file")
+
 
         # Extract text data from bookmarks
         texts = [bookmark["name"] for bookmark in tagged_data]
+
+        # print(texts)
 
         # Vectorize the text data using TF-IDF
         vectorizer = TfidfVectorizer()
@@ -48,6 +62,13 @@ def cluster_texts_from_json():
         # Perform clustering using HDBSCAN with a lower min_cluster_size
         clusterer = HDBSCAN()  # Adjust this value as needed
         cluster_labels = clusterer.fit_predict(X)
+
+        print(cluster_labels)
+
+        # Print cluster labels
+        # print("Cluster labels:")
+        # for label in set(cluster_labels):
+        #     print(label)
 
         # Assign bookmarks to clusters
         clusters = {}
@@ -61,6 +82,8 @@ def cluster_texts_from_json():
         app.logger.info("Clusters clustered")
 
         cluster_info = generate_cluster_names(clusters)
+
+        print(cluster_info)
         
         structured_data = build_structured_json(clusters, cluster_info)
 

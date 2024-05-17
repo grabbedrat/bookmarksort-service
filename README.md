@@ -72,3 +72,6 @@ To work on or test the application, follow these steps:
 2. Navigate to the application directory in your terminal or command prompt.
 3. Run `python run.py` to start the development server.
 4. Use tools like `curl` or Postman to send POST requests to `http://localhost:5000/cluster`.
+
+
+curl -X POST -H "Content-Type: application/json" -d @app/request_data.json http://localhost:5000/cluster
