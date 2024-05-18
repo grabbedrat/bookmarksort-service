@@ -1,4 +1,5 @@
 import logging
+import os
 from openai import OpenAI
 
 # Configure logging

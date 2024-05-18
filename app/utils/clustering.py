@@ -6,6 +6,7 @@ from sklearn.cluster import AgglomerativeClustering
 from scipy.cluster.hierarchy import dendrogram, linkage
 import os
 import logging
+from .config import client
 
 # Disable parallel tokenization to avoid multiprocessing issues
 os.environ["TOKENIZERS_PARALLELISM"] = "false"

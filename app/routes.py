@@ -3,12 +3,9 @@ from flask_cors import cross_origin
 from hdbscan import HDBSCAN
 from sklearn.feature_extraction.text import TfidfVectorizer
 from .utils.clustering import generate_cluster_names
-from .utils.bookmark_import import build_json_import
 from .utils.visualization import visualize_clusters, visualize_structured_data
 from .utils.data_preprocessing import clean_bookmark_data, add_tags_to_bookmarks
 from .utils.json_builder import build_structured_json
-import json
-import logging
 
 @app.route('/cluster', methods=['POST'])
 @cross_origin()
