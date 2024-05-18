@@ -3,8 +3,6 @@ import openai
 import os
 from multiprocessing import Pool
 
-openai.api_key = os.getenv("OPENAI_API_KEY")  # Replace with your actual API key
-
 def clean_bookmark_data(bookmark_data):
     cleaned_data = []
     for bookmark in bookmark_data:
