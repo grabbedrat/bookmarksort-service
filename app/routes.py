@@ -11,7 +11,6 @@ import json
 @app.route('/cluster', methods=['POST'])
 @cross_origin()
 def cluster_texts_from_json():
-
     if not request.is_json:
         return jsonify({"error": "Missing JSON in request"}), 400
 
@@ -23,14 +22,6 @@ def cluster_texts_from_json():
     for bookmark in json_data:
         if not expected_keys.issubset(bookmark):
             return jsonify({"error": "Bookmark object missing required keys"}), 400
-        
-    # Save request data to a file
-    with open('/root/myrepos/bookmarksort-service/app/request_data.json', 'w') as file:
-        json.dump(json_data, file)
-    print("Request data saved to file")
-        
-    # print amount of bookamrks
-    print(f"Number of bookmarks received: {len(json_data)}")
 
     try:
         # Clean the bookmark data
@@ -38,37 +29,18 @@ def cluster_texts_from_json():
 
         # Add tags to the cleaned bookmark data
         tagged_data = add_tags_to_bookmarks(cleaned_data)
-        print("Data Tagged")
-
-        # Save tagged data to a file
-        with open('/root/myrepos/bookmarksort-service/app/tagged_data.json', 'w') as file:
-            json.dump(tagged_data, file)
-        print("Tagged data saved to file")
-
-        with open('/root/myrepos/bookmarksort-service/app/tagged_data.json', 'w') as file:
-            json.dump(tagged_data, file)
-        print("Tagged data saved to file")
-
+        print(f"Number of bookmarks received: {len(tagged_data)}")
 
         # Extract text data from bookmarks
         texts = [bookmark["name"] for bookmark in tagged_data]
-
-        # print(texts)
 
         # Vectorize the text data using TF-IDF
         vectorizer = TfidfVectorizer()
         X = vectorizer.fit_transform(texts)
 
-        # Perform clustering using HDBSCAN with a lower min_cluster_size
-        clusterer = HDBSCAN()  # Adjust this value as needed
+        # Perform clustering using HDBSCAN
+        clusterer = HDBSCAN()
         cluster_labels = clusterer.fit_predict(X)
-
-        print(cluster_labels)
-
-        # Print cluster labels
-        # print("Cluster labels:")
-        # for label in set(cluster_labels):
-        #     print(label)
 
         # Assign bookmarks to clusters
         clusters = {}
@@ -79,12 +51,10 @@ def cluster_texts_from_json():
                 clusters[label].append(tagged_data[i])
 
         num_clusters = len(clusters)
-        app.logger.info("Clusters clustered")
+        print(f"Bookmarks sorted into {num_clusters} clusters")
 
         cluster_info = generate_cluster_names(clusters)
 
-        print(cluster_info)
-        
         structured_data = build_structured_json(clusters, cluster_info)
 
         output_file = "cluster_visualization.png"
@@ -93,6 +63,8 @@ def cluster_texts_from_json():
         # Visualize the structured data and save as JPEG
         output_file_structured = "structured_data_visualization.jpeg"
         visualize_structured_data(structured_data, output_file_structured)
+
+        print(f"{len(json_data)} bookmarks sorted into {len(clusters)} clusters")
 
         return jsonify(structured_data)
 
@@ -104,12 +76,9 @@ def build_structured_json(clusters, cluster_info):
     structured_data = []
 
     def create_folder(cluster_id, parent_id=None):
-        # Convert NumPy int64 to Python int
-        cluster_id = int(cluster_id)
-
         folder = {
             "type": "folder",
-            "id": cluster_id,
+            "id": int(cluster_id),
             "name": cluster_info[cluster_id],
             "children": []
         }
@@ -132,7 +101,7 @@ def build_structured_json(clusters, cluster_info):
 
     def assign_parent_folders(folder, parent_id, depth=0, max_depth=5):
         if depth > max_depth:
-            structured_data.append(folder)  # Add folder to top-level if max depth is exceeded
+            structured_data.append(folder)
             return
 
         if parent_id is not None:
@@ -140,13 +109,13 @@ def build_structured_json(clusters, cluster_info):
             if parent_folder:
                 parent_folder["children"].append(folder)
             else:
-                assign_parent_folders(folder, parent_id // 2, depth + 1)  # Recursively search for parent folder
+                assign_parent_folders(folder, parent_id // 2, depth + 1)
         else:
             structured_data.append(folder)
 
     for cluster_id in clusters:
         folder = create_folder(cluster_id)
-        parent_id = cluster_id // 2  # Assign parent folder based on cluster ID
+        parent_id = cluster_id // 2
         assign_parent_folders(folder, parent_id)
 
     return structured_data

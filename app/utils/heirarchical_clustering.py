@@ -24,7 +24,7 @@ def encode_texts(model, texts):
     except Exception as e:
         raise RuntimeError(f"Error encoding texts: {e}")
 
-def perform_clustering(embeddings, distance_threshold=1.0):
+def perform_clustering(embeddings, distance_threshold=2):
     try:
         link_matrix = linkage(embeddings, method='ward')
         clustering = AgglomerativeClustering(n_clusters=None, distance_threshold=distance_threshold, compute_full_tree=True)
