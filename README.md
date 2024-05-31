@@ -1,3 +1,4 @@
+***⚠️ Warning: This repository is deprecated and no longer maintained. Project now located at https://github.com/grabbedrat/bookmarksort ⚠️***
 # README
 
 ## Bookmark Clustering Application
