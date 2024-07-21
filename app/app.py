@@ -1,66 +1,95 @@
-from flask import Flask, request, jsonify
+from flask import Flask
 from flask_restx import Api, Resource, fields
-from bertopic_wrapper import BERTopicWrapper
-from database import Database
-from models import Bookmark, Topic
+from bertopic import BERTopic
+from sklearn.feature_extraction.text import CountVectorizer
+from dataclasses import dataclass, asdict, field
+from typing import List
+import logging
 
 app = Flask(__name__)
-api = Api(app, version='1.0', title='Bookmark Sorter API',
-          description='A hierarchical bookmark sorting API using BERTopic')
+api = Api(app, version='1.0', title='Bookmark Sorting API',
+          description='An API for sorting and categorizing bookmarks using BERTopic')
 
-bertopic_wrapper = BERTopicWrapper()
-db = Database()
+logging.basicConfig(level=logging.INFO)
 
-# Define namespaces
-ns_bookmarks = api.namespace('bookmarks', description='Bookmark operations')
-ns_topics = api.namespace('topics', description='Topic operations')
+ns = api.namespace('bookmarks', description='Bookmark operations')
 
-# Define models for request/response
+@dataclass
+class Bookmark:
+    url: str
+    title: str
+    tags: List[str] = field(default_factory=list)
+
+    def to_document(self):
+        return f"{self.title} {self.url} {' '.join(self.tags)}".strip()
+
+@dataclass
+class BookmarkResult(Bookmark):
+    topics: List[str] = field(default_factory=list)
+    probabilities: List[float] = field(default_factory=list)
+
+class BERTopicWrapper:
+    def __init__(self):
+        self.model = BERTopic(
+            language="english",
+            min_topic_size=5,
+            nr_topics="auto",
+            calculate_probabilities=True,
+            verbose=True
+        )
+        self.vectorizer = CountVectorizer(stop_words="english")
+        self.documents = []
+
+    def process_bookmarks(self, bookmarks):
+        new_documents = [bookmark.to_document() for bookmark in bookmarks]
+        self.documents.extend(new_documents)
+        
+        topics, probs = self.model.fit_transform(new_documents)
+        
+        results = []
+        for bookmark, topic, prob in zip(bookmarks, topics, probs):
+            topic_labels = self.model.get_topic(topic)
+            topic_names = [label[0] for label in topic_labels if label]
+            results.append(BookmarkResult(
+                url=bookmark.url,
+                title=bookmark.title,
+                tags=bookmark.tags,
+                topics=topic_names,
+                probabilities=prob.tolist()
+            ))
+        
+        return results
+
+topic_wrapper = BERTopicWrapper()
+
 bookmark_model = api.model('Bookmark', {
     'url': fields.String(required=True, description='The bookmark URL'),
-    'title': fields.String(required=True, description='The bookmark title')
+    'title': fields.String(required=True, description='The bookmark title'),
+    'tags': fields.List(fields.String, description='List of tags associated with the bookmark')
 })
 
-bookmark_response = api.model('BookmarkResponse', {
-    'status': fields.String(description='Operation status'),
-    'bookmark_id': fields.Integer(description='ID of the created bookmark'),
-    'topics': fields.List(fields.String, description='Assigned topics')
+bookmarks_model = api.model('BookmarkList', {
+    'bookmarks': fields.List(fields.Nested(bookmark_model), required=True, description='List of bookmarks to process')
 })
 
-@ns_bookmarks.route('/')
-class BookmarkList(Resource):
-    @api.expect(bookmark_model)
-    @api.marshal_with(bookmark_response)
+bookmark_result_model = api.model('BookmarkResult', {
+    'url': fields.String(description='The bookmark URL'),
+    'title': fields.String(description='The bookmark title'),
+    'tags': fields.List(fields.String, description='List of tags associated with the bookmark'),
+    'topics': fields.List(fields.String, description='List of topics assigned to the bookmark'),
+    'probabilities': fields.List(fields.Float, description='Probabilities for each topic')
+})
+
+@ns.route('/')
+class BookmarksResource(Resource):
+    @ns.expect(bookmarks_model)
+    @ns.marshal_list_with(bookmark_result_model)
     def post(self):
-        """Add a new bookmark"""
-        data = request.json
-        url = data.get('url')
-        title = data.get('title')
-        
-        # Add bookmark to database
-        bookmark_id = db.add_bookmark(url, title)
-        
-        # Process the bookmark with BERTopic
-        topics = bertopic_wrapper.process_bookmark(url, title)
-        
-        # Update database with topics
-        db.update_bookmark_topics(bookmark_id, topics)
-        
-        return {"status": "success", "bookmark_id": bookmark_id, "topics": topics}
-
-    @api.doc('list_bookmarks')
-    def get(self):
-        """List all bookmarks"""
-        bookmarks = db.get_all_bookmarks()
-        return jsonify([b.__dict__ for b in bookmarks])
-
-@ns_topics.route('/hierarchy')
-class TopicHierarchy(Resource):
-    @api.doc('get_topic_hierarchy')
-    def get(self):
-        """Get the topic hierarchy"""
-        hierarchy = bertopic_wrapper.get_topic_hierarchy()
-        return jsonify(hierarchy)
+        """Process a list of bookmarks and assign topics"""
+        bookmarks_data = api.payload['bookmarks']
+        bookmarks = [Bookmark(url=b['url'], title=b['title'], tags=b.get('tags', [])) for b in bookmarks_data]
+        results = topic_wrapper.process_bookmarks(bookmarks)
+        return [asdict(result) for result in results]
 
 if __name__ == '__main__':
     app.run(debug=True)
