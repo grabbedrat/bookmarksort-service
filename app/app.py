@@ -1,16 +1,19 @@
-from flask import Flask
+from flask import Flask, jsonify
 from flask_restx import Api, Resource, fields
 from bertopic import BERTopic
 from sklearn.feature_extraction.text import CountVectorizer
 from dataclasses import dataclass, asdict, field
-from typing import List
+from typing import List, Dict
 import logging
+import sys
+import threading
 
 app = Flask(__name__)
 api = Api(app, version='1.0', title='Bookmark Sorting API',
           description='An API for sorting and categorizing bookmarks using BERTopic')
 
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 ns = api.namespace('bookmarks', description='Bookmark operations')
 
@@ -30,17 +33,37 @@ class BookmarkResult(Bookmark):
 
 class BERTopicWrapper:
     def __init__(self):
-        self.model = BERTopic(
-            language="english",
-            min_topic_size=5,
-            nr_topics="auto",
-            calculate_probabilities=True,
-            verbose=True
-        )
-        self.vectorizer = CountVectorizer(stop_words="english")
+        self.model = None
+        self.vectorizer = None
         self.documents = []
+        self.is_ready = False
+        self.is_initializing = False
+
+    def initialize(self):
+        if self.is_initializing:
+            return
+        self.is_initializing = True
+        logger.info("Initializing BERTopic model...")
+        try:
+            self.model = BERTopic(
+                language="english",
+                min_topic_size=5,
+                nr_topics="auto",
+                calculate_probabilities=True,
+                verbose=True
+            )
+            self.vectorizer = CountVectorizer(stop_words="english")
+            self.is_ready = True
+            logger.info("BERTopic model initialized successfully.")
+        except Exception as e:
+            logger.error(f"Failed to initialize BERTopic model: {str(e)}")
+        finally:
+            self.is_initializing = False
 
     def process_bookmarks(self, bookmarks):
+        if not self.is_ready:
+            raise RuntimeError("BERTopic model is not yet initialized")
+
         new_documents = [bookmark.to_document() for bookmark in bookmarks]
         self.documents.extend(new_documents)
         
@@ -60,7 +83,30 @@ class BERTopicWrapper:
         
         return results
 
+    def organize_bookmarks(self, bookmarks):
+        results = self.process_bookmarks(bookmarks)
+        organized_bookmarks = {}
+        
+        for result in results:
+            main_topic = result.topics[0] if result.topics else "Uncategorized"
+            if main_topic not in organized_bookmarks:
+                organized_bookmarks[main_topic] = []
+            organized_bookmarks[main_topic].append({
+                "url": result.url,
+                "title": result.title,
+                "tags": result.tags
+            })
+        
+        return organized_bookmarks
+
+# Global variable to hold the BERTopicWrapper instance
 topic_wrapper = BERTopicWrapper()
+
+def initialize_model_async():
+    topic_wrapper.initialize()
+
+# Start model initialization in a separate thread
+threading.Thread(target=initialize_model_async).start()
 
 bookmark_model = api.model('Bookmark', {
     'url': fields.String(required=True, description='The bookmark URL'),
@@ -68,16 +114,48 @@ bookmark_model = api.model('Bookmark', {
     'tags': fields.List(fields.String, description='List of tags associated with the bookmark')
 })
 
+organized_bookmarks_model = api.model('OrganizedBookmarks', {
+    'topic': fields.List(fields.Nested(bookmark_model), description='List of bookmarks for each topic')
+})
+
 @ns.route('/')
 class BookmarksResource(Resource):
     @ns.expect([bookmark_model])
-    @ns.marshal_list_with(bookmark_model)
     def post(self):
-        """Process a list of bookmarks and assign topics"""
+        """Process a list of bookmarks and organize them by topics"""
+        if not topic_wrapper.is_ready:
+            return jsonify({"success": False, "error": "Model is still initializing. Please try again later."}), 503
+
         bookmarks_data = api.payload
+        if not bookmarks_data:
+            return jsonify({"success": False, "error": "No bookmarks provided"}), 400
+
         bookmarks = [Bookmark(url=b['url'], title=b['title'], tags=b.get('tags', [])) for b in bookmarks_data]
-        results = topic_wrapper.process_bookmarks(bookmarks)
-        return [asdict(result) for result in results]
+        try:
+            organized_bookmarks = topic_wrapper.organize_bookmarks(bookmarks)
+            
+            # Ensure the organized_bookmarks is in the correct format
+            formatted_bookmarks = {}
+            for topic, bookmarks_list in organized_bookmarks.items():
+                formatted_bookmarks[topic] = [
+                    {"url": b["url"], "title": b["title"], "tags": b.get("tags", [])}
+                    for b in bookmarks_list
+                ]
+            
+            logger.info(f"Organized bookmarks: {formatted_bookmarks}")
+            return jsonify({"success": True, "preview": formatted_bookmarks})
+        except Exception as e:
+            logger.error(f"Error processing bookmarks: {str(e)}")
+            return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/status')
+def model_status():
+    if topic_wrapper.is_ready:
+        return jsonify({"status": "ready"}), 200
+    elif topic_wrapper.is_initializing:
+        return jsonify({"status": "initializing"}), 202
+    else:
+        return jsonify({"status": "not started"}), 500
 
 if __name__ == '__main__':
     app.run(debug=True)
