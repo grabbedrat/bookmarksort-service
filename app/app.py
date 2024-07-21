@@ -68,25 +68,13 @@ bookmark_model = api.model('Bookmark', {
     'tags': fields.List(fields.String, description='List of tags associated with the bookmark')
 })
 
-bookmarks_model = api.model('BookmarkList', {
-    'bookmarks': fields.List(fields.Nested(bookmark_model), required=True, description='List of bookmarks to process')
-})
-
-bookmark_result_model = api.model('BookmarkResult', {
-    'url': fields.String(description='The bookmark URL'),
-    'title': fields.String(description='The bookmark title'),
-    'tags': fields.List(fields.String, description='List of tags associated with the bookmark'),
-    'topics': fields.List(fields.String, description='List of topics assigned to the bookmark'),
-    'probabilities': fields.List(fields.Float, description='Probabilities for each topic')
-})
-
 @ns.route('/')
 class BookmarksResource(Resource):
-    @ns.expect(bookmarks_model)
-    @ns.marshal_list_with(bookmark_result_model)
+    @ns.expect([bookmark_model])
+    @ns.marshal_list_with(bookmark_model)
     def post(self):
         """Process a list of bookmarks and assign topics"""
-        bookmarks_data = api.payload['bookmarks']
+        bookmarks_data = api.payload
         bookmarks = [Bookmark(url=b['url'], title=b['title'], tags=b.get('tags', [])) for b in bookmarks_data]
         results = topic_wrapper.process_bookmarks(bookmarks)
         return [asdict(result) for result in results]
