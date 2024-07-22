@@ -8,8 +8,10 @@ import logging
 import threading
 import torch
 from sentence_transformers import SentenceTransformer
+from flask_cors import CORS
 
 app = Flask(__name__)
+CORS(app)  # This enables CORS for all routes
 api = Api(app, version='1.0', title='Bookmark Sorting API',
           description='An API for sorting and categorizing bookmarks using BERTopic')
 
