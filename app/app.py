@@ -1,12 +1,13 @@
-from flask import Flask, jsonify
+from flask import Flask
 from flask_restx import Api, Resource, fields
 from bertopic import BERTopic
 from sklearn.feature_extraction.text import CountVectorizer
 from dataclasses import dataclass, asdict, field
 from typing import List, Dict
 import logging
-import sys
 import threading
+import torch
+from sentence_transformers import SentenceTransformer
 
 app = Flask(__name__)
 api = Api(app, version='1.0', title='Bookmark Sorting API',
@@ -38,23 +39,28 @@ class BERTopicWrapper:
         self.documents = []
         self.is_ready = False
         self.is_initializing = False
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     def initialize(self):
         if self.is_initializing:
             return
         self.is_initializing = True
-        logger.info("Initializing BERTopic model...")
+        logger.info(f"Initializing BERTopic model on {self.device}...")
         try:
+            # Explicitly set the device for SentenceTransformer
+            embedding_model = SentenceTransformer("all-MiniLM-L6-v2", device=self.device)
+            
             self.model = BERTopic(
                 language="english",
                 min_topic_size=5,
                 nr_topics="auto",
                 calculate_probabilities=True,
-                verbose=True
+                verbose=True,
+                embedding_model=embedding_model
             )
             self.vectorizer = CountVectorizer(stop_words="english")
             self.is_ready = True
-            logger.info("BERTopic model initialized successfully.")
+            logger.info(f"BERTopic model initialized successfully on {self.device}.")
         except Exception as e:
             logger.error(f"Failed to initialize BERTopic model: {str(e)}")
         finally:
@@ -124,17 +130,16 @@ class BookmarksResource(Resource):
     def post(self):
         """Process a list of bookmarks and organize them by topics"""
         if not topic_wrapper.is_ready:
-            return jsonify({"success": False, "error": "Model is still initializing. Please try again later."}), 503
+            return {"success": False, "error": "Model is still initializing. Please try again later."}, 503
 
         bookmarks_data = api.payload
         if not bookmarks_data:
-            return jsonify({"success": False, "error": "No bookmarks provided"}), 400
+            return {"success": False, "error": "No bookmarks provided"}, 400
 
         bookmarks = [Bookmark(url=b['url'], title=b['title'], tags=b.get('tags', [])) for b in bookmarks_data]
         try:
             organized_bookmarks = topic_wrapper.organize_bookmarks(bookmarks)
             
-            # Ensure the organized_bookmarks is in the correct format
             formatted_bookmarks = {}
             for topic, bookmarks_list in organized_bookmarks.items():
                 formatted_bookmarks[topic] = [
@@ -142,20 +147,19 @@ class BookmarksResource(Resource):
                     for b in bookmarks_list
                 ]
             
-            logger.info(f"Organized bookmarks: {formatted_bookmarks}")
-            return jsonify({"success": True, "preview": formatted_bookmarks})
+            return {"success": True, "preview": formatted_bookmarks}
         except Exception as e:
             logger.error(f"Error processing bookmarks: {str(e)}")
-            return jsonify({"success": False, "error": str(e)}), 500
+            return {"success": False, "error": str(e)}, 500
 
 @app.route('/status')
 def model_status():
     if topic_wrapper.is_ready:
-        return jsonify({"status": "ready"}), 200
+        return {"status": "ready", "device": str(topic_wrapper.device)}, 200
     elif topic_wrapper.is_initializing:
-        return jsonify({"status": "initializing"}), 202
+        return {"status": "initializing", "device": str(topic_wrapper.device)}, 202
     else:
-        return jsonify({"status": "not started"}), 500
+        return {"status": "not started"}, 500
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host='0.0.0.0', port=5000)
