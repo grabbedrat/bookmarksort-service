@@ -3,6 +3,7 @@ from flask_restx import Api, Resource, fields
 from flask_cors import CORS
 from bertopic import BERTopic
 import umap
+import hdbscan
 import numpy as np
 from typing import List, Dict
 import logging
@@ -42,21 +43,34 @@ Base.metadata.create_all(engine)
 
 class BookmarkOrganizer:
     def __init__(self):
-        self.model = None
+        self.embedding_model = None
         self.umap_model = None
-        self.sentence_transformer = None
+        self.hdbscan_model = None
+        self.topic_model = None
         self.is_ready = False
         self.is_initializing = False
 
-    def initialize(self):
+    def initialize(self, embedding_model="all-MiniLM-L6-v2", umap_n_neighbors=15, umap_n_components=5, 
+                   umap_min_dist=0.0, hdbscan_min_cluster_size=15, hdbscan_min_samples=10, 
+                   nr_topics="auto", top_n_words=10):
         if self.is_initializing:
             return
         self.is_initializing = True
-        logger.info("Initializing BERTopic model...")
+        logger.info("Initializing models...")
         try:
-            self.sentence_transformer = SentenceTransformer('all-MiniLM-L6-v2')
-            self.model = BERTopic(language="english", min_topic_size=5, nr_topics="auto", embedding_model=self.sentence_transformer)
-            self.umap_model = umap.UMAP(n_components=2, random_state=42)
+            self.embedding_model = SentenceTransformer(embedding_model)
+            self.umap_model = umap.UMAP(n_neighbors=umap_n_neighbors, n_components=umap_n_components, 
+                                        min_dist=umap_min_dist, metric='cosine')
+            self.hdbscan_model = hdbscan.HDBSCAN(min_cluster_size=hdbscan_min_cluster_size, 
+                                                 min_samples=hdbscan_min_samples, metric='euclidean', 
+                                                 cluster_selection_method='eom')
+            self.topic_model = BERTopic(
+                embedding_model=self.embedding_model,
+                umap_model=self.umap_model,
+                hdbscan_model=self.hdbscan_model,
+                nr_topics=nr_topics,
+                top_n_words=top_n_words
+            )
             self.is_ready = True
             logger.info("Model initialization complete.")
         except Exception as e:
@@ -69,8 +83,12 @@ class BookmarkOrganizer:
             raise RuntimeError("Model is not initialized")
 
         texts = [f"{b['title']} {b['url']}" for b in bookmarks]
-        topics, _ = self.model.fit_transform(texts)
-        embeddings = self.sentence_transformer.encode(texts)
+        
+        # Embedding stage
+        embeddings = self.embedding_model.encode(texts, show_progress_bar=True)
+        
+        # Clustering and topic modeling stage
+        topics, _ = self.topic_model.fit_transform(texts, embeddings)
         
         try:
             reduced_embeddings = self.umap_model.fit_transform(embeddings)
@@ -102,7 +120,6 @@ class BookmarkOrganizer:
                     session.commit()
                 except IntegrityError:
                     session.rollback()
-                    # If the bookmark already exists, we'll just skip it
                     logger.warning(f"Bookmark with URL {bookmark['url']} already exists. Skipping.")
 
         except Exception as e:
@@ -119,24 +136,19 @@ class BookmarkOrganizer:
     def find_similar_bookmarks(self, bookmark_url: str, top_k: int = 5) -> List[Dict]:
         session = Session()
         try:
-            # Fetch the query bookmark
             query_bookmark = session.query(Bookmark).filter_by(url=bookmark_url).first()
             if not query_bookmark:
                 return []
 
             query_embedding = np.array(query_bookmark.embedding)
-
-            # Fetch all bookmarks
             all_bookmarks = session.query(Bookmark).all()
 
-            # Calculate similarities
             similarities = []
             for bookmark in all_bookmarks:
                 if bookmark.url != bookmark_url:
                     similarity = np.dot(query_embedding, np.array(bookmark.embedding))
                     similarities.append((bookmark, similarity))
 
-            # Sort by similarity and get top_k
             similarities.sort(key=lambda x: x[1], reverse=True)
             top_similar = similarities[:top_k]
 
@@ -203,8 +215,16 @@ def status():
         return {"status": "not started"}, 500
 
 def initialize_model_async():
-    organizer.initialize()
-
+    organizer.initialize(
+        embedding_model="all-MiniLM-L6-v2",
+        umap_n_neighbors=15,
+        umap_n_components=5,
+        umap_min_dist=0.0,
+        hdbscan_min_cluster_size=15,
+        hdbscan_min_samples=10,
+        nr_topics="auto",
+        top_n_words=10
+    )
 # Start model initialization in a separate thread
 threading.Thread(target=initialize_model_async).start()
 
