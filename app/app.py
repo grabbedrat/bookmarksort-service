@@ -1,167 +1,115 @@
 from flask import Flask
 from flask_restx import Api, Resource, fields
+from flask_cors import CORS
 from bertopic import BERTopic
-from sklearn.feature_extraction.text import CountVectorizer
-from dataclasses import dataclass, asdict, field
+import umap
+import numpy as np
 from typing import List, Dict
 import logging
 import threading
-import torch
-from sentence_transformers import SentenceTransformer
-from flask_cors import CORS
 
 app = Flask(__name__)
-CORS(app)  # This enables CORS for all routes
-api = Api(app, version='1.0', title='Bookmark Sorting API',
-          description='An API for sorting and categorizing bookmarks using BERTopic')
+CORS(app)
+api = Api(app, version='1.0', title='Bookmark Organizer API',
+          description='An API for organizing bookmarks using BERTopic')
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 ns = api.namespace('bookmarks', description='Bookmark operations')
 
-@dataclass
-class Bookmark:
-    url: str
-    title: str
-    tags: List[str] = field(default_factory=list)
-
-    def to_document(self):
-        return f"{self.title} {self.url} {' '.join(self.tags)}".strip()
-
-@dataclass
-class BookmarkResult(Bookmark):
-    topics: List[str] = field(default_factory=list)
-    probabilities: List[float] = field(default_factory=list)
-
-class BERTopicWrapper:
+class BookmarkOrganizer:
     def __init__(self):
         self.model = None
-        self.vectorizer = None
-        self.documents = []
+        self.umap_model = None
         self.is_ready = False
         self.is_initializing = False
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     def initialize(self):
         if self.is_initializing:
             return
         self.is_initializing = True
-        logger.info(f"Initializing BERTopic model on {self.device}...")
+        logger.info("Initializing BERTopic model...")
         try:
-            # Explicitly set the device for SentenceTransformer
-            embedding_model = SentenceTransformer("all-MiniLM-L6-v2", device=self.device)
-            
-            self.model = BERTopic(
-                language="english",
-                min_topic_size=5,
-                nr_topics="auto",
-                calculate_probabilities=True,
-                verbose=True,
-                embedding_model=embedding_model
-            )
-            self.vectorizer = CountVectorizer(stop_words="english")
+            self.model = BERTopic(language="english", min_topic_size=5, nr_topics="auto")
+            self.umap_model = umap.UMAP(n_components=2, random_state=42)
             self.is_ready = True
-            logger.info(f"BERTopic model initialized successfully on {self.device}.")
+            logger.info("Model initialization complete.")
         except Exception as e:
-            logger.error(f"Failed to initialize BERTopic model: {str(e)}")
+            logger.error(f"Failed to initialize model: {str(e)}")
         finally:
             self.is_initializing = False
 
-    def process_bookmarks(self, bookmarks):
+    def process_bookmarks(self, bookmarks: List[Dict]) -> Dict:
         if not self.is_ready:
-            raise RuntimeError("BERTopic model is not yet initialized")
+            raise RuntimeError("Model is not initialized")
 
-        new_documents = [bookmark.to_document() for bookmark in bookmarks]
-        self.documents.extend(new_documents)
-        
-        topics, probs = self.model.fit_transform(new_documents)
-        
-        results = []
-        for bookmark, topic, prob in zip(bookmarks, topics, probs):
-            topic_labels = self.model.get_topic(topic)
-            topic_names = [label[0] for label in topic_labels if label]
-            results.append(BookmarkResult(
-                url=bookmark.url,
-                title=bookmark.title,
-                tags=bookmark.tags,
-                topics=topic_names,
-                probabilities=prob.tolist()
-            ))
-        
-        return results
+        texts = [f"{b['title']} {b['url']}" for b in bookmarks]
+        topics, probs = self.model.fit_transform(texts)
+        embeddings = self.model.embedding_model.encode(texts)
+        reduced_embeddings = self.umap_model.fit_transform(embeddings)
 
-    def organize_bookmarks(self, bookmarks):
-        results = self.process_bookmarks(bookmarks)
         organized_bookmarks = {}
-        
-        for result in results:
-            main_topic = result.topics[0] if result.topics else "Uncategorized"
-            if main_topic not in organized_bookmarks:
-                organized_bookmarks[main_topic] = []
-            organized_bookmarks[main_topic].append({
-                "url": result.url,
-                "title": result.title,
-                "tags": result.tags
+        for bookmark, topic, coord in zip(bookmarks, topics, reduced_embeddings):
+            topic_name = f"Topic_{topic}" if topic != -1 else "Uncategorized"
+            if topic_name not in organized_bookmarks:
+                organized_bookmarks[topic_name] = []
+            organized_bookmarks[topic_name].append({
+                "url": bookmark["url"],
+                "title": bookmark["title"],
+                "x": float(coord[0]),
+                "y": float(coord[1])
             })
-        
-        return organized_bookmarks
 
-# Global variable to hold the BERTopicWrapper instance
-topic_wrapper = BERTopicWrapper()
+        return {
+            "organized_bookmarks": organized_bookmarks,
+            "reduced_embeddings": reduced_embeddings.tolist()
+        }
+
+organizer = BookmarkOrganizer()
+
+bookmark_model = api.model('Bookmark', {
+    'url': fields.String(required=True, description='The bookmark URL'),
+    'title': fields.String(required=True, description='The bookmark title')
+})
+
+organized_bookmarks_model = api.model('OrganizedBookmarks', {
+    'success': fields.Boolean(description='Whether the operation was successful'),
+    'organized_bookmarks': fields.Raw(description='Organized bookmarks by topic'),
+    'reduced_embeddings': fields.List(fields.List(fields.Float), description='UMAP reduced embeddings')
+})
+
+@ns.route('/process')
+class BookmarkProcess(Resource):
+    @ns.expect([bookmark_model])
+    @ns.marshal_with(organized_bookmarks_model)
+    def post(self):
+        """Process a list of bookmarks and organize them by topics"""
+        if not organizer.is_ready:
+            api.abort(503, "Model is still initializing. Please try again later.")
+
+        bookmarks = api.payload
+        try:
+            result = organizer.process_bookmarks(bookmarks)
+            return {"success": True, **result}
+        except Exception as e:
+            logger.error(f"Error processing bookmarks: {str(e)}")
+            api.abort(500, f"Error processing bookmarks: {str(e)}")
+
+@app.route('/status')
+def status():
+    if organizer.is_ready:
+        return {"status": "ready"}, 200
+    elif organizer.is_initializing:
+        return {"status": "initializing"}, 202
+    else:
+        return {"status": "not started"}, 500
 
 def initialize_model_async():
-    topic_wrapper.initialize()
+    organizer.initialize()
 
 # Start model initialization in a separate thread
 threading.Thread(target=initialize_model_async).start()
 
-bookmark_model = api.model('Bookmark', {
-    'url': fields.String(required=True, description='The bookmark URL'),
-    'title': fields.String(required=True, description='The bookmark title'),
-    'tags': fields.List(fields.String, description='List of tags associated with the bookmark')
-})
-
-organized_bookmarks_model = api.model('OrganizedBookmarks', {
-    'topic': fields.List(fields.Nested(bookmark_model), description='List of bookmarks for each topic')
-})
-
-@ns.route('/')
-class BookmarksResource(Resource):
-    @ns.expect([bookmark_model])
-    def post(self):
-        """Process a list of bookmarks and organize them by topics"""
-        if not topic_wrapper.is_ready:
-            return {"success": False, "error": "Model is still initializing. Please try again later."}, 503
-
-        bookmarks_data = api.payload
-        if not bookmarks_data:
-            return {"success": False, "error": "No bookmarks provided"}, 400
-
-        bookmarks = [Bookmark(url=b['url'], title=b['title'], tags=b.get('tags', [])) for b in bookmarks_data]
-        try:
-            organized_bookmarks = topic_wrapper.organize_bookmarks(bookmarks)
-            
-            formatted_bookmarks = {}
-            for topic, bookmarks_list in organized_bookmarks.items():
-                formatted_bookmarks[topic] = [
-                    {"url": b["url"], "title": b["title"], "tags": b.get("tags", [])}
-                    for b in bookmarks_list
-                ]
-            
-            return {"success": True, "preview": formatted_bookmarks}
-        except Exception as e:
-            logger.error(f"Error processing bookmarks: {str(e)}")
-            return {"success": False, "error": str(e)}, 500
-
-@app.route('/status')
-def model_status():
-    if topic_wrapper.is_ready:
-        return {"status": "ready", "device": str(topic_wrapper.device)}, 200
-    elif topic_wrapper.is_initializing:
-        return {"status": "initializing", "device": str(topic_wrapper.device)}, 202
-    else:
-        return {"status": "not started"}, 500
-
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    app.run(debug=True)
