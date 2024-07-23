@@ -7,6 +7,7 @@ import numpy as np
 from typing import List, Dict
 import logging
 import threading
+from sentence_transformers import SentenceTransformer
 
 app = Flask(__name__)
 CORS(app)
@@ -22,6 +23,7 @@ class BookmarkOrganizer:
     def __init__(self):
         self.model = None
         self.umap_model = None
+        self.sentence_transformer = None
         self.is_ready = False
         self.is_initializing = False
 
@@ -31,7 +33,8 @@ class BookmarkOrganizer:
         self.is_initializing = True
         logger.info("Initializing BERTopic model...")
         try:
-            self.model = BERTopic(language="english", min_topic_size=5, nr_topics="auto")
+            self.sentence_transformer = SentenceTransformer('all-MiniLM-L6-v2')
+            self.model = BERTopic(language="english", min_topic_size=5, nr_topics="auto", embedding_model=self.sentence_transformer)
             self.umap_model = umap.UMAP(n_components=2, random_state=42)
             self.is_ready = True
             logger.info("Model initialization complete.")
@@ -46,7 +49,7 @@ class BookmarkOrganizer:
 
         texts = [f"{b['title']} {b['url']}" for b in bookmarks]
         topics, probs = self.model.fit_transform(texts)
-        embeddings = self.model.embedding_model.encode(texts)
+        embeddings = self.sentence_transformer.encode(texts)
         reduced_embeddings = self.umap_model.fit_transform(embeddings)
 
         organized_bookmarks = {}
