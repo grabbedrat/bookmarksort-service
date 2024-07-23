@@ -1,5 +1,5 @@
-from flask import Flask, jsonify
-from flask_restx import Api, Resource, fields
+from flask import Flask, jsonify, request
+from flask_restx import Api, Resource, fields, reqparse
 from flask_cors import CORS
 from bertopic import BERTopic
 import umap
@@ -9,7 +9,7 @@ from typing import List, Dict
 import logging
 import threading
 from sentence_transformers import SentenceTransformer
-from sqlalchemy import create_engine, Column, Integer, String, PickleType
+from sqlalchemy import create_engine, Column, Integer, String, PickleType, func
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import IntegrityError
@@ -89,18 +89,11 @@ class BookmarkOrganizer:
         
         # Clustering and topic modeling stage
         topics, _ = self.topic_model.fit_transform(texts, embeddings)
-        
-        try:
-            reduced_embeddings = self.umap_model.fit_transform(embeddings)
-        except ValueError:
-            # If UMAP fails, use PCA as a fallback
-            pca = PCA(n_components=2)
-            reduced_embeddings = pca.fit_transform(embeddings)
 
         organized_bookmarks = {}
         session = Session()
         try:
-            for bookmark, topic, embedding, reduced_emb in zip(bookmarks, topics, embeddings, reduced_embeddings):
+            for bookmark, topic, embedding in zip(bookmarks, topics, embeddings):
                 topic_name = f"Topic_{topic}" if topic != -1 else "Uncategorized"
                 if topic_name not in organized_bookmarks:
                     organized_bookmarks[topic_name] = []
@@ -108,7 +101,6 @@ class BookmarkOrganizer:
                 bookmark_data = {
                     "url": bookmark["url"],
                     "title": bookmark["title"],
-                    "embedding": reduced_emb.tolist()
                 }
                 organized_bookmarks[topic_name].append(bookmark_data)
 
@@ -129,29 +121,53 @@ class BookmarkOrganizer:
         finally:
             session.close()
 
-        return {
-            "organized_bookmarks": organized_bookmarks
-        }
+        return organized_bookmarks
 
-    def find_similar_bookmarks(self, bookmark_url: str, top_k: int = 5) -> List[Dict]:
+    def add_bookmark(self, bookmark: Dict) -> Dict:
+        return self.process_bookmarks([bookmark])
+
+    def list_bookmarks(self, topic: str = None, page: int = 1, per_page: int = 20) -> Dict:
         session = Session()
         try:
-            query_bookmark = session.query(Bookmark).filter_by(url=bookmark_url).first()
-            if not query_bookmark:
-                return []
+            query = session.query(Bookmark)
+            if topic:
+                query = query.filter(Bookmark.topic == topic)
+            
+            total = query.count()
+            bookmarks = query.offset((page - 1) * per_page).limit(per_page).all()
+            
+            return {
+                "bookmarks": [
+                    {
+                        "url": bookmark.url,
+                        "title": bookmark.title,
+                        "topic": bookmark.topic
+                    }
+                    for bookmark in bookmarks
+                ],
+                "total": total,
+                "page": page,
+                "per_page": per_page,
+                "total_pages": (total + per_page - 1) // per_page
+            }
+        finally:
+            session.close()
 
-            query_embedding = np.array(query_bookmark.embedding)
+    def search_bookmarks(self, query: str) -> List[Dict]:
+        if not self.is_ready:
+            raise RuntimeError("Model is not initialized")
+
+        query_embedding = self.embedding_model.encode([query], show_progress_bar=False)[0]
+
+        session = Session()
+        try:
             all_bookmarks = session.query(Bookmark).all()
-
-            similarities = []
+            results = []
             for bookmark in all_bookmarks:
-                if bookmark.url != bookmark_url:
-                    similarity = np.dot(query_embedding, np.array(bookmark.embedding))
-                    similarities.append((bookmark, similarity))
+                similarity = np.dot(query_embedding, np.array(bookmark.embedding))
+                results.append((bookmark, similarity))
 
-            similarities.sort(key=lambda x: x[1], reverse=True)
-            top_similar = similarities[:top_k]
-
+            results.sort(key=lambda x: x[1], reverse=True)
             return [
                 {
                     "url": bookmark.url,
@@ -159,8 +175,16 @@ class BookmarkOrganizer:
                     "topic": bookmark.topic,
                     "similarity": float(similarity)
                 }
-                for bookmark, similarity in top_similar
+                for bookmark, similarity in results[:10]  # Return top 10 results
             ]
+        finally:
+            session.close()
+
+    def get_topics(self) -> List[Dict]:
+        session = Session()
+        try:
+            topics = session.query(Bookmark.topic, func.count(Bookmark.id)).group_by(Bookmark.topic).all()
+            return [{"topic": topic, "count": count} for topic, count in topics]
         finally:
             session.close()
 
@@ -172,38 +196,95 @@ bookmark_model = api.model('Bookmark', {
     'title': fields.String(required=True, description='The bookmark title')
 })
 
-organized_bookmarks_model = api.model('OrganizedBookmarks', {
+bookmark_response_model = api.model('BookmarkResponse', {
     'success': fields.Boolean(description='Whether the operation was successful'),
-    'organized_bookmarks': fields.Raw(description='Organized bookmarks by topic with embeddings')
+    'organized_bookmarks': fields.Raw(description='Organized bookmarks by topic')
+})
+
+bookmarks_list_model = api.model('BookmarksList', {
+    'bookmarks': fields.List(fields.Nested(bookmark_model)),
+    'total': fields.Integer(description='Total number of bookmarks'),
+    'page': fields.Integer(description='Current page number'),
+    'per_page': fields.Integer(description='Number of bookmarks per page'),
+    'total_pages': fields.Integer(description='Total number of pages')
+})
+
+search_result_model = api.model('SearchResult', {
+    'url': fields.String(description='The bookmark URL'),
+    'title': fields.String(description='The bookmark title'),
+    'topic': fields.String(description='The bookmark topic'),
+    'similarity': fields.Float(description='Similarity score')
+})
+
+topic_model = api.model('Topic', {
+    'topic': fields.String(description='Topic name'),
+    'count': fields.Integer(description='Number of bookmarks in this topic')
 })
 
 @ns.route('/process')
-class BookmarkProcess(Resource):
+class ProcessBookmarks(Resource):
     @ns.expect([bookmark_model])
-    @ns.marshal_with(organized_bookmarks_model)
+    @ns.marshal_with(bookmark_response_model)
     def post(self):
         """Process a list of bookmarks and organize them by topics"""
         if not organizer.is_ready:
-            return jsonify({"success": False, "error": "Model is still initializing. Please try again later."}), 503
+            return {"success": False, "error": "Model is still initializing. Please try again later."}, 503
 
         bookmarks = api.payload
         try:
             result = organizer.process_bookmarks(bookmarks)
-            return {"success": True, **result}
+            return {"success": True, "organized_bookmarks": result}
         except Exception as e:
             logger.error(f"Error processing bookmarks: {str(e)}")
-            return jsonify({"success": False, "error": str(e)}), 500
+            return {"success": False, "error": str(e)}, 500
 
-@ns.route('/similar/<string:bookmark_url>')
-class SimilarBookmarks(Resource):
-    def get(self, bookmark_url):
-        """Find similar bookmarks based on the given bookmark URL"""
-        similar_bookmarks = organizer.find_similar_bookmarks(bookmark_url)
-        
-        if not similar_bookmarks:
-            return {"success": False, "message": "Bookmark not found"}, 404
-        
-        return {"success": True, "similar_bookmarks": similar_bookmarks}
+@ns.route('/add')
+class AddBookmark(Resource):
+    @ns.expect(bookmark_model)
+    @ns.marshal_with(bookmark_response_model)
+    def post(self):
+        """Add a new bookmark"""
+        if not organizer.is_ready:
+            return {"success": False, "error": "Model is still initializing. Please try again later."}, 503
+
+        bookmark = api.payload
+        result = organizer.add_bookmark(bookmark)
+        return {"success": True, "organized_bookmarks": result}
+
+@ns.route('/list')
+@ns.param('topic', 'Filter bookmarks by topic (optional)')
+@ns.param('page', 'Page number (default: 1)')
+@ns.param('per_page', 'Number of bookmarks per page (default: 20)')
+class ListBookmarks(Resource):
+    @ns.marshal_with(bookmarks_list_model)
+    def get(self):
+        """List all bookmarks, optionally filtered by topic"""
+        topic = request.args.get('topic')
+        page = int(request.args.get('page', 1))
+        per_page = int(request.args.get('per_page', 20))
+        return organizer.list_bookmarks(topic, page, per_page)
+
+@ns.route('/search')
+@ns.param('q', 'Search query')
+class SearchBookmarks(Resource):
+    @ns.marshal_with(search_result_model)
+    def get(self):
+        """Search bookmarks by keyword"""
+        if not organizer.is_ready:
+            return {"error": "Model is still initializing. Please try again later."}, 503
+
+        query = request.args.get('q')
+        if not query:
+            return {"error": "Search query is required"}, 400
+
+        return organizer.search_bookmarks(query)
+
+@ns.route('/topics')
+class Topics(Resource):
+    @ns.marshal_with(topic_model)
+    def get(self):
+        """Get all topics and their bookmark counts"""
+        return organizer.get_topics()
 
 @app.route('/status')
 def status():
@@ -225,6 +306,7 @@ def initialize_model_async():
         nr_topics="auto",
         top_n_words=10
     )
+
 # Start model initialization in a separate thread
 threading.Thread(target=initialize_model_async).start()
 
