@@ -53,33 +53,33 @@ class BookmarkOrganizer:
         reduced_embeddings = self.umap_model.fit_transform(embeddings)
 
         organized_bookmarks = {}
-        for bookmark, topic, coord in zip(bookmarks, topics, reduced_embeddings):
+        for bookmark, topic, embedding in zip(bookmarks, topics, reduced_embeddings):
             topic_name = f"Topic_{topic}" if topic != -1 else "Uncategorized"
             if topic_name not in organized_bookmarks:
                 organized_bookmarks[topic_name] = []
             organized_bookmarks[topic_name].append({
                 "url": bookmark["url"],
                 "title": bookmark["title"],
-                "x": float(coord[0]),
-                "y": float(coord[1])
+                "embedding": embedding.tolist()
             })
 
         return {
-            "organized_bookmarks": organized_bookmarks,
-            "reduced_embeddings": reduced_embeddings.tolist()
+            "organized_bookmarks": organized_bookmarks
         }
 
 organizer = BookmarkOrganizer()
 
+# Updated Bookmark model
 bookmark_model = api.model('Bookmark', {
     'url': fields.String(required=True, description='The bookmark URL'),
-    'title': fields.String(required=True, description='The bookmark title')
+    'title': fields.String(required=True, description='The bookmark title'),
+    'embedding': fields.List(fields.Float, description='The embedding of the bookmark')
 })
 
+# Updated OrganizedBookmarks model
 organized_bookmarks_model = api.model('OrganizedBookmarks', {
     'success': fields.Boolean(description='Whether the operation was successful'),
-    'organized_bookmarks': fields.Raw(description='Organized bookmarks by topic'),
-    'reduced_embeddings': fields.List(fields.List(fields.Float), description='UMAP reduced embeddings')
+    'organized_bookmarks': fields.Raw(description='Organized bookmarks by topic with embeddings')
 })
 
 @ns.route('/process')
