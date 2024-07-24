@@ -3,6 +3,7 @@ from flask import request, current_app
 from flask_restx import Namespace, Resource, fields
 from http import HTTPStatus
 from models import Bookmark
+from flask import jsonify
 
 ns = Namespace('bookmarks', description='Bookmark operations')
 
@@ -44,6 +45,17 @@ topic_model = ns.model('Topic', {
 visualization_model = ns.model('Visualization', {
     'success': fields.Boolean(description='Whether the operation was successful'),
     'visualization_data': fields.Raw(description='Visualization data for bookmarks')
+})
+
+update_params_model = ns.model('UpdateParams', {
+    'embedding_model': fields.String(description='Embedding model name'),
+    'umap_n_neighbors': fields.Integer(description='UMAP n_neighbors parameter'),
+    'umap_n_components': fields.Integer(description='UMAP n_components parameter'),
+    'umap_min_dist': fields.Float(description='UMAP min_dist parameter'),
+    'hdbscan_min_cluster_size': fields.Integer(description='HDBSCAN min_cluster_size parameter'),
+    'hdbscan_min_samples': fields.Integer(description='HDBSCAN min_samples parameter'),
+    'nr_topics': fields.String(description='Number of topics'),
+    'top_n_words': fields.Integer(description='Number of top words per topic')
 })
 
 def init_routes(api):
@@ -134,3 +146,17 @@ def init_routes(api):
             except Exception as e:
                 current_app.logger.error(f"Error getting visualization data: {str(e)}")
                 return {"success": False, "error": str(e)}, HTTPStatus.INTERNAL_SERVER_ERROR
+            
+    @ns.route('/update_params')
+    class UpdateParams(Resource):
+        @ns.expect(update_params_model)
+        def post(self):
+            """Update the parameters for the bookmark organizer"""
+            organizer = current_app.organizer
+            new_params = request.json
+            try:
+                organizer.update_parameters(new_params)
+                return jsonify({"success": True, "message": "Parameters updated successfully"})
+            except Exception as e:
+                current_app.logger.error(f"Error updating parameters: {str(e)}")
+                return jsonify({"success": False, "error": str(e)}), HTTPStatus.INTERNAL_SERVER_ERROR

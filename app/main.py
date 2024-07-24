@@ -1,12 +1,12 @@
-# main.py
 from flask import Flask
 from flask_restx import Api, Resource
 from flask_cors import CORS
 from config import Config
 from models import init_db
 from routes import init_routes
-from bookmark_organizer import BookmarkOrganizer
+from bookmark_organizer import create_bookmark_organizer
 from threading import Thread
+import traceback
 
 def create_app(config_class=Config):
     app = Flask(__name__)
@@ -19,8 +19,7 @@ def create_app(config_class=Config):
     init_db(app)
     init_routes(api)
 
-    organizer = BookmarkOrganizer()
-    app.organizer = organizer
+    app.organizer = create_bookmark_organizer()
 
     def initialize_model_async():
         app.organizer.initialize(
@@ -42,6 +41,13 @@ def create_app(config_class=Config):
     class Status(Resource):
         def get(self):
             try:
+                app.logger.info("Status endpoint called")
+                if not hasattr(app, 'organizer'):
+                    app.logger.error("app.organizer not found")
+                    return {"status": "error", "message": "Organizer not initialized"}, 500
+                
+                app.logger.info(f"Organizer status: is_ready={app.organizer.is_ready}, is_initializing={app.organizer.is_initializing}")
+                
                 if app.organizer.is_ready:
                     return {"status": "ready"}, 200
                 elif app.organizer.is_initializing:
@@ -50,6 +56,7 @@ def create_app(config_class=Config):
                     return {"status": "not started"}, 500
             except Exception as e:
                 app.logger.error(f"Error in status endpoint: {str(e)}")
+                app.logger.error(f"Error traceback: {traceback.format_exc()}")
                 return {"status": "error", "message": str(e)}, 500
 
     return app

@@ -22,27 +22,45 @@ class BookmarkOrganizer:
         self.topic_model = None
         self.is_ready = False
         self.is_initializing = False
+        self.params = {
+            "embedding_model": "all-MiniLM-L6-v2",
+            "umap_n_neighbors": 15,
+            "umap_n_components": 5,
+            "umap_min_dist": 0.0,
+            "hdbscan_min_cluster_size": 15,
+            "hdbscan_min_samples": 10,
+            "nr_topics": "auto",
+            "top_n_words": 10
+        }
 
-    def initialize(self, embedding_model="all-MiniLM-L6-v2", umap_n_neighbors=15, umap_n_components=5, 
-                   umap_min_dist=0.0, hdbscan_min_cluster_size=15, hdbscan_min_samples=10, 
-                   nr_topics="auto", top_n_words=10):
+    def initialize(self, **kwargs):
         if self.is_initializing:
             return
         self.is_initializing = True
         logger.info("Initializing models...")
         try:
-            self.embedding_model = SentenceTransformer(embedding_model)
-            self.umap_model = umap.UMAP(n_neighbors=umap_n_neighbors, n_components=umap_n_components, 
-                                        min_dist=umap_min_dist, metric='cosine')
-            self.hdbscan_model = hdbscan.HDBSCAN(min_cluster_size=hdbscan_min_cluster_size, 
-                                                 min_samples=hdbscan_min_samples, metric='euclidean', 
-                                                 cluster_selection_method='eom')
+            # Update params with any provided kwargs
+            self.params.update(kwargs)
+
+            self.embedding_model = SentenceTransformer(self.params["embedding_model"])
+            self.umap_model = umap.UMAP(
+                n_neighbors=self.params["umap_n_neighbors"],
+                n_components=self.params["umap_n_components"],
+                min_dist=self.params["umap_min_dist"],
+                metric='cosine'
+            )
+            self.hdbscan_model = hdbscan.HDBSCAN(
+                min_cluster_size=self.params["hdbscan_min_cluster_size"],
+                min_samples=self.params["hdbscan_min_samples"],
+                metric='euclidean',
+                cluster_selection_method='eom'
+            )
             self.topic_model = BERTopic(
                 embedding_model=self.embedding_model,
                 umap_model=self.umap_model,
                 hdbscan_model=self.hdbscan_model,
-                nr_topics=nr_topics,
-                top_n_words=top_n_words
+                nr_topics=self.params["nr_topics"],
+                top_n_words=self.params["top_n_words"]
             )
             self.is_ready = True
             logger.info("Model initialization complete.")
@@ -50,6 +68,11 @@ class BookmarkOrganizer:
             logger.error(f"Failed to initialize model: {str(e)}")
         finally:
             self.is_initializing = False
+
+    def update_parameters(self, new_params):
+        self.params.update(new_params)
+        self.is_ready = False
+        self.initialize()
 
     def process_bookmarks(self, bookmarks: List[Dict]) -> Dict:
         if not self.is_ready:
@@ -184,5 +207,4 @@ def initialize_model_async(organizer):
 
 def create_bookmark_organizer():
     organizer = BookmarkOrganizer()
-    threading.Thread(target=initialize_model_async, args=(organizer,)).start()
     return organizer
