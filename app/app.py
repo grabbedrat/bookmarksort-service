@@ -188,6 +188,34 @@ class BookmarkOrganizer:
         finally:
             session.close()
 
+    def get_visualization_data(self) -> Dict:
+        session = Session()
+        try:
+            bookmarks = session.query(Bookmark).all()
+            
+            # Create a 2D projection of the embeddings
+            embeddings = np.array([bookmark.embedding for bookmark in bookmarks])
+            pca = PCA(n_components=2)
+            projections = pca.fit_transform(embeddings)
+            
+            visualization_data = {
+                "nodes": [
+                    {
+                        "id": bookmark.id,
+                        "url": bookmark.url,
+                        "title": bookmark.title,
+                        "topic": bookmark.topic,
+                        "x": float(projections[i][0]),
+                        "y": float(projections[i][1])
+                    }
+                    for i, bookmark in enumerate(bookmarks)
+                ],
+                "links": []  # You can add links between related bookmarks if needed
+            }
+            return visualization_data
+        finally:
+            session.close()
+
 organizer = BookmarkOrganizer()
 
 # API models
@@ -285,6 +313,20 @@ class Topics(Resource):
     def get(self):
         """Get all topics and their bookmark counts"""
         return organizer.get_topics()
+
+@ns.route('/visualization')
+class Visualization(Resource):
+    def get(self):
+        """Get visualization data for bookmarks"""
+        if not organizer.is_ready:
+            return {"error": "Model is still initializing. Please try again later."}, 503
+        
+        try:
+            visualization_data = organizer.get_visualization_data()
+            return {"success": True, "visualization_data": visualization_data}
+        except Exception as e:
+            logger.error(f"Error getting visualization data: {str(e)}")
+            return {"success": False, "error": str(e)}, 500
 
 @app.route('/status')
 def status():
