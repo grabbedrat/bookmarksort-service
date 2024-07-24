@@ -63,17 +63,15 @@ def init_routes(api):
 
     @ns.route('/process')
     class ProcessBookmarks(Resource):
-        @ns.expect([bookmark_model])
         @ns.marshal_with(bookmark_response_model)
         def post(self):
-            """Process a list of bookmarks and organize them by topics"""
+            """Process all bookmarks in the database and organize them by topics"""
             organizer = current_app.organizer
             if not organizer.is_ready:
                 return {"success": False, "error": "Model is still initializing. Please try again later."}, HTTPStatus.SERVICE_UNAVAILABLE
 
-            bookmarks = request.json
             try:
-                result = organizer.process_bookmarks(bookmarks)
+                result = organizer.process_bookmarks()
                 return {"success": True, "organized_bookmarks": result}
             except Exception as e:
                 current_app.logger.error(f"Error processing bookmarks: {str(e)}")
@@ -90,8 +88,12 @@ def init_routes(api):
                 return {"success": False, "error": "Model is still initializing. Please try again later."}, HTTPStatus.SERVICE_UNAVAILABLE
 
             bookmark = request.json
-            result = organizer.add_bookmark(bookmark)
-            return {"success": True, "organized_bookmarks": result}
+            try:
+                result = organizer.add_bookmark(bookmark)
+                return {"success": True, "organized_bookmarks": result}
+            except Exception as e:
+                current_app.logger.error(f"Error adding bookmark: {str(e)}")
+                return {"success": False, "error": str(e)}, HTTPStatus.INTERNAL_SERVER_ERROR
 
     @ns.route('/list')
     @ns.param('topic', 'Filter bookmarks by topic (optional)')

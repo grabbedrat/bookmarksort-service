@@ -74,11 +74,12 @@ class BookmarkOrganizer:
         self.is_ready = False
         self.initialize()
 
-    def process_bookmarks(self, bookmarks: List[Dict]) -> Dict:
+    def process_bookmarks(self) -> Dict:
         if not self.is_ready:
             raise RuntimeError("Model is not initialized")
 
-        texts = [f"{b['title']} {b['url']}" for b in bookmarks]
+        bookmarks = Bookmark.query.all()
+        texts = [f"{b.title} {b.url}" for b in bookmarks]
         
         # Embedding stage
         embeddings = self.embedding_model.encode(texts, show_progress_bar=True)
@@ -94,30 +95,55 @@ class BookmarkOrganizer:
                     organized_bookmarks[topic_name] = []
                 
                 bookmark_data = {
-                    "url": bookmark["url"],
-                    "title": bookmark["title"],
+                    "url": bookmark.url,
+                    "title": bookmark.title,
                 }
                 organized_bookmarks[topic_name].append(bookmark_data)
 
-                # Store in database
-                try:
-                    db_bookmark = Bookmark(url=bookmark["url"], title=bookmark["title"], 
-                                           embedding=embedding.tolist(), topic=topic_name)
-                    db.session.merge(db_bookmark)  # merge will insert or update
-                    db.session.commit()
-                except IntegrityError:
-                    db.session.rollback()
-                    logger.warning(f"Bookmark with URL {bookmark['url']} already exists. Skipping.")
+                # Update bookmark in database
+                bookmark.embedding = embedding.tolist()
+                bookmark.topic = topic_name
 
+            db.session.commit()
         except Exception as e:
             db.session.rollback()
-            logger.error(f"Error storing bookmarks: {str(e)}")
+            logger.error(f"Error processing bookmarks: {str(e)}")
             raise
 
         return organized_bookmarks
 
     def add_bookmark(self, bookmark: Dict) -> Dict:
-        return self.process_bookmarks([bookmark])
+        if not self.is_ready:
+            raise RuntimeError("Model is not initialized")
+
+        text = f"{bookmark['title']} {bookmark['url']}"
+        
+        # Embedding stage
+        embedding = self.embedding_model.encode([text], show_progress_bar=False)[0]
+        
+        # Predict topic
+        topic, _ = self.topic_model.transform([text])
+        topic_name = f"Topic_{topic[0]}" if topic[0] != -1 else "Uncategorized"
+
+        try:
+            db_bookmark = Bookmark(
+                url=bookmark["url"],
+                title=bookmark["title"],
+                embedding=embedding.tolist(),
+                topic=topic_name
+            )
+            db.session.add(db_bookmark)
+            db.session.commit()
+
+            return {topic_name: [{"url": bookmark["url"], "title": bookmark["title"]}]}
+        except IntegrityError:
+            db.session.rollback()
+            logger.warning(f"Bookmark with URL {bookmark['url']} already exists. Skipping.")
+            return {}
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Error adding bookmark: {str(e)}")
+            raise
 
     def list_bookmarks(self, topic: str = None, page: int = 1, per_page: int = 20) -> Dict:
         query = Bookmark.query
